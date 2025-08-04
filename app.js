@@ -1,7 +1,7 @@
 import { GoogleGenAI } from "https://esm.sh/@google/genai";
 
 const $ = sel => document.querySelector(sel);
-const log = msg => $('#log').textContent += msg + '\n';
+const log = msg => console.log(msg);
 
 // ---------- utilities ----------
 function parseRange(rangeStr, maxItems) {
