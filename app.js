@@ -70,7 +70,6 @@ async function translateContent(genAI, content, model) {
 // ---------- main ----------
 $('#form').addEventListener('submit', async e => {
   e.preventDefault();
-  $('#log').textContent = '';
   $('#progress').style.display = 'block';
 
   const jsonUrl   = $('#jsonUrl').value.trim();
