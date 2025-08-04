@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Browser Novel Translator</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+  <h1>Browser Novel Translator</h1>
+
+  <form id="form">
+    <!-- existing fields -->
+    <label>
+      JSON URL:
+      <input type="url" id="jsonUrl" required placeholder="https://example.com/data.json"/>
+    </label>
+    <label>
+      Range:
+      <input type="text" id="range" placeholder="1-100" pattern="\d+(-\d+)?"/>
+    </label>
+    <label>
+      Google AI API Key:
+      <input type="password" id="apiKey" required/>
+    </label>
+    <label>
+      Main model:
+      <select id="model">
+        <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
+        <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+        <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+        <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+        <option value="gemini-2.0-flash-lite">gemini-2.0-flash-lite</option>
+      </select>
+    </label>
+    <label>
+      Title model:
+      <select id="titleModel">
+        <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+        <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
+      </select>
+    </label>
+    <label>
+      Start delay (ms):
+      <input type="number" id="delay" value="4000" min="0"/>
+    </label>
+
+    <!-- NEW: GitHub switch & inputs -->
+    <label>
+      <input type="checkbox" id="uploadToGitHub"/>
+      Also commit result to GitHub
+    </label>
+
+    <div id="githubFields" style="display:none">
+      <label>
+        GitHub Personal Access Token:
+        <input type="password" id="ghToken" placeholder="ghp_…"/>
+      </label>
+      <label>
+        Repository (owner/repo):
+        <input type="text" id="ghRepo" placeholder="myUser/myRepo"/>
+      </label>
+      <label>
+        Branch:
+        <input type="text" id="ghBranch" value="main"/>
+      </label>
+      <label>
+        Path in repo (with .json):
+        <input type="text" id="ghPath" placeholder="translations/output.json"/>
+      </label>
+    </div>
+
+    <button type="submit">Translate</button>
+  </form>
+
+  <progress id="progress" max="100" value="0" style="display:none;"></progress>
+ <!-- Replace the old <pre id="log"></pre> with this -->
+<div id="console" class="console">
+  <div id="consoleLines"></div>
+</div>
+
+<style>
+.console {
+  border: 1px solid #444;
+  background: #111;
+  color: #eee;
+  font-family: "Fira Code", "Consolas", monospace;
+  font-size: 13px;
+  height: 300px;
+  overflow-y: auto;
+  padding: 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.console .line            { margin: 0; line-height: 1.25; }
+.console .err             { color: #ff6b6b; }
+.console .warn            { color: #feca57; }
+.console .info            { color: #48dbfb; }
+</style>
+
+<script>
+// Redirect every console.* call into the on-screen console
+(() => {
+  const $lines = document.getElementById('consoleLines');
+  function addLine(type, args) {
+    const span = document.createElement('div');
+    span.className = `line ${type}`;
+    span.textContent = [...args].map(a =>
+      (typeof a === 'object' && a !== null) ? JSON.stringify(a, null, 2) : String(a)
+    ).join(' ');
+    $lines.appendChild(span);
+    span.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }
+
+  const log = console.log;
+  const warn = console.warn;
+  const error = console.error;
+  const info = console.info;
+
+  console.log  = (...a) => { log(...a);   addLine('info', a); };
+  console.info = (...a) => { info(...a);  addLine('info', a); };
+  console.warn = (...a) => { warn(...a);  addLine('warn', a); };
+  console.error= (...a) => { error(...a); addLine('err',  a); };
+})();
+</script>
+
+  <!-- NEW: commit button, shown only after translation -->
+  <button id="githubCommitBtn" style="display:none">Commit & Push to GitHub</button>
+
+  <script type="module" src="app.js"></script>
+
+  <script type="module">
+    // ---------- GitHub commit logic ----------
+    let lastBlob = null; // holds the translated JSON after translation is done
+
+    // show/hide GitHub fields
+    $('#uploadToGitHub').addEventListener('change', e => {
+      $('#githubFields').style.display = e.target.checked ? 'block' : 'none';
+    });
+
+    // intercept translation finish to store blob
+    const oldDone = window.onTranslationDone || (()=>{});
+    window.onTranslationDone = (blob) => {
+      lastBlob = blob;
+      $('#githubCommitBtn').style.display = $('#uploadToGitHub').checked ? 'inline-block' : 'none';
+      oldDone(blob);
+    };
+
+    $('#githubCommitBtn').addEventListener('click', async () => {
+      const token = $('#ghToken').value.trim();
+      const repo  = $('#ghRepo').value.trim();
+      const branch= $('#ghBranch').value.trim();
+      const path  = $('#ghPath').value.trim();
+      if (!token || !repo || !branch || !path) {
+        alert('Fill all GitHub fields first.');
+        return;
+      }
+      try {
+        // get current file SHA (if it exists)
+        const shaRes = await fetch(`https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}?ref=${branch}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const sha = shaRes.ok ? (await shaRes.json()).sha : null;
+
+        // convert blob → base64
+        const content = await lastBlob.text();
+        const base64  = btoa(unescape(encodeURIComponent(content)));
+
+        const body = {
+          message: `Add translated ${new Date().toISOString()}`,
+          content: base64,
+          branch
+        };
+        if (sha) body.sha = sha;
+
+        const put = await fetch(`https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}`, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(body)
+        });
+        if (!put.ok) throw new Error((await put.json()).message);
+        log('✅ Successfully pushed to GitHub!');
+        $('#githubCommitBtn').style.display = 'none';
+      } catch (e) {
+        log('GitHub commit failed: ' + e.message);
+      }
+    });
+
+    // tiny helper
+    function $(sel) { return document.querySelector(sel); }
+  </script>
+</body>
+</html>
